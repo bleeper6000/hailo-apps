@@ -30,6 +30,12 @@ gi.require_version('Gtk', '3.0')
 gi.require_version("Gst", "1.0")
 from gi.repository import GLib, Gst
 
+# How long to wait for a stalled pipeline to reach NULL before giving up on
+# rebuilding it in-process. The old code waited 2s and then freed the pipeline
+# regardless of whether it got there; this waits longer and, crucially, acts on
+# the answer.
+REBUILD_NULL_TIMEOUT = 5  # seconds
+
 from hailo_apps.python.core.common.buffer_utils import (
     get_caps_from_pad,
     get_numpy_from_buffer,
@@ -365,6 +371,12 @@ class GStreamerApp:
         self.watchdog_running = False
         self.rebuild_count = 0
         self.watchdog_paused = False
+        # Frame count at the moment a rebuild finished. While this is set, the
+        # rebuild is not yet proven: set_state(PLAYING) returning is not the
+        # same as frames arriving, and for an RTSP source it is several seconds
+        # short of it. _watchdog_monitor clears both this and watchdog_paused
+        # once the count actually moves. See _rebuild_pipeline.
+        self._rebuild_frame_mark = None
 
         if self.watchdog_enabled:
             hailo_logger.info(
@@ -410,6 +422,25 @@ class GStreamerApp:
             if self.watchdog_paused:
                 # If paused (e.g. during rebuild), update timestamp to avoid immediate trigger upon resume
                 last_progress_time = time.time()
+
+                # A finished rebuild stays "paused" until frames prove it worked.
+                # Resuming on set_state(PLAYING) alone re-armed this monitor while
+                # the new pipeline was still in its async PLAYING transition — with
+                # timeout == interval == 5s and an RTSP source needing ~4s to
+                # connect, the next tick saw no new frames and fired a SECOND
+                # rebuild into a half-built pipeline, which segfaulted. Waiting for
+                # the count to move costs nothing when the rebuild worked and
+                # avoids tearing down a pipeline that was still coming up.
+                if self._rebuild_frame_mark is not None:
+                    resumed_count = self.user_data.get_count()
+                    if resumed_count > self._rebuild_frame_mark:
+                        hailo_logger.info(
+                            f"Pipeline rebuild confirmed — frames flowing again "
+                            f"(count {resumed_count}). Watchdog re-armed."
+                        )
+                        self._rebuild_frame_mark = None
+                        last_check_count = resumed_count
+                        self.watchdog_paused = False
                 continue
 
             current_count = self.user_data.get_count()
@@ -558,9 +589,36 @@ class GStreamerApp:
             # Step 1: Stop and destroy the old pipeline
             hailo_logger.debug("Stopping old pipeline")
             if self.pipeline:
-                self.pipeline.set_state(Gst.State.NULL)
-                # Wait briefly for NULL state
-                self.pipeline.get_state(2 * Gst.SECOND)
+                # Both return values matter and both used to be discarded.
+                # A rebuild is triggered precisely when the camera has stopped
+                # answering, which is exactly when rtspsrc's NULL transition is
+                # slow: it wants to send RTSP TEARDOWN to a device that is not
+                # responding. Dropping the last reference before the transition
+                # completes finalizes the pipeline while its streaming threads
+                # are still inside it — a use-after-free, and the SIGSEGV that
+                # landed 0.2-0.5s after every "Watchdog detected stall!".
+                ret = self.pipeline.set_state(Gst.State.NULL)
+                if ret == Gst.StateChangeReturn.ASYNC:
+                    ret, state, _pending = self.pipeline.get_state(REBUILD_NULL_TIMEOUT * Gst.SECOND)
+                    if ret != Gst.StateChangeReturn.SUCCESS or state != Gst.State.NULL:
+                        # The pipeline cannot be torn down and cannot be freed.
+                        # Exiting is the only safe move left, and it is what the
+                        # segfault achieved anyway — minus the fault, and minus
+                        # whatever state a fault leaves on the NPU. os._exit,
+                        # not sys.exit: returning through run()'s cleanup would
+                        # call set_state(NULL) on this same wedged pipeline and
+                        # hang there instead.
+                        hailo_logger.error(
+                            "Pipeline did not reach NULL within %ss (state=%s, ret=%s) — "
+                            "cannot rebuild safely. Exiting so the service manager can "
+                            "restart us cleanly." % (REBUILD_NULL_TIMEOUT, state, ret)
+                        )
+                        for stream in (sys.stdout, sys.stderr):
+                            try:
+                                stream.flush()
+                            except Exception:
+                                pass
+                        os._exit(1)
                 # Remove bus watch
                 bus = self.pipeline.get_bus()
                 bus.remove_signal_watch()
@@ -602,10 +660,16 @@ class GStreamerApp:
                 self.loop.quit()
                 return False
 
-            hailo_logger.debug("Pipeline rebuilt and restarted successfully")
+            hailo_logger.debug("Pipeline rebuilt and restarted")
 
-            # Resume watchdog monitoring
-            self.watchdog_paused = False
+            # NOT resuming the watchdog here. set_state(PLAYING) returns ASYNC
+            # for an RTSP source: the pipeline has not connected yet, let alone
+            # delivered a frame. Record where the frame count stands and let
+            # _watchdog_monitor re-arm once it moves — i.e. once the rebuild has
+            # actually worked. watchdog_paused deliberately stays True until
+            # then, so a rebuild that never produces frames is still covered by
+            # the outer service-manager watchdog rather than looking healthy.
+            self._rebuild_frame_mark = self.user_data.get_count()
 
         except Exception as e:
             hailo_logger.error(f"Exception during pipeline rebuild: {e}")
