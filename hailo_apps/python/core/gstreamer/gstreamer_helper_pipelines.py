@@ -162,12 +162,12 @@ def SOURCE_PIPELINE(
         source_element = (
             f"ximagesrc xid={video_source} ! {QUEUE(name=f'{name}queue_scale_')} ! videoscale ! "
         )
-    elif source_type == 'rtsp':  # RTSP stream handling
+    elif source_type == 'rtsp':
         source_element = (
-            f'rtspsrc location="{video_source}" name={name} ! '
+            f'rtspsrc location="{video_source}" protocols=tcp latency=500 name={name} ! '
+            f'rtph264depay ! h264parse ! avdec_h264 ! '
             f'{QUEUE(name=f"{name}_queue_decode")} ! '
-            f'decodebin name={name}_decodebin ! '
-        )
+    )
     elif source_type == 'udp':  # UDP stream handling (e.g., Gazebo camera)
         # Extract port from udp://host:port or udp://:port
         port = video_source.split(':')[-1]
