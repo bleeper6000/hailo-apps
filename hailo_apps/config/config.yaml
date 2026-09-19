@@ -11,12 +11,12 @@
 # These values are auto-detected during installation and written to .env file.
 # Set to "auto" for automatic detection, or specify a fixed value.
 
-hailort_version: "auto"       # Options: "auto", "4.23.0", "5.1.1", "5.2.0"
-tappas_version: "auto"        # Options: "auto", "5.1.0", "5.2.0"
+hailort_version: "5.2.0"      # Options: "auto", "4.23.0", "5.1.1", "5.2.0"
+tappas_version: "5.2.0"        # Options: "auto", "5.1.0", "5.2.0"
 tappas_postproc_path: "auto"  # Path to TAPPAS postprocess libs (auto from pkg-config)
-model_zoo_version: "auto"     # Options: "auto", "v2.17.0" (H8), "v5.1.0" or "v5.2.0" (H10)
+model_zoo_version: "v5.2.0"    # Options: "auto", "v2.17.0" (H8), "v5.1.0" or "v5.2.0" (H10)
 host_arch: "auto"             # Options: "auto", "x86", "rpi", "arm"
-hailo_arch: "auto"            # Options: "auto", "hailo8", "hailo8l", "hailo10h"
+hailo_arch: "hailo10h"            # Options: "auto", "hailo8", "hailo8l", "hailo10h"
 multi_processing: "enabled"   # Options: "enabled", "disabled"
 
 #-------------------------------------------------------------------------------
@@ -27,19 +27,12 @@ multi_processing: "enabled"   # Options: "enabled", "disabled"
 
 valid_versions:
   hailort:
-    - "4.23.0"
-    - "5.1.1"
     - "5.2.0"
   tappas:
-    - "5.1.0"
     - "5.2.0"
   hailo_arch:
-    - "hailo8"
-    - "hailo8l"
     - "hailo10h"
   host_arch:
-    - "x86"
-    - "rpi"
     - "arm"
 
 #-------------------------------------------------------------------------------
@@ -54,14 +47,13 @@ valid_versions:
 model_zoo_mapping:
   hailo8: "v2.17.0"
   hailo8l: "v2.17.0"
-  hailo10h: "v5.1.0"
+  hailo10h: "v5.2.0"
 
 # Valid Model Zoo versions by architecture family (for validation)
 valid_model_zoo_versions:
   h8:   # Applies to hailo8 and hailo8l
     - "v2.17.0"
   h10:  # Applies to hailo10h
-    - "v5.1.0"
     - "v5.2.0"
 
 #-------------------------------------------------------------------------------
