@@ -51,6 +51,23 @@ tmp_venv
 
 venv_hailo_apps/
 
+# A venv created at the repo root itself, rather than in one of the named
+# directories above. Its layout lands as bare bin/, lib/, include/ and
+# pyvenv.cfg beside the source, and the venv writes its own .gitignore
+# containing a single "*" as it does so — which silently ignores the entire
+# repository, hiding every local change to the framework. Build venvs
+# elsewhere; these entries are the backstop if one is built here anyway.
+#
+# Anchored with a leading slash so they only ever match the repo root and
+# never a real source directory deeper in the tree.
+/bin/
+/include/
+/lib/
+/lib64
+/share/
+/etc/
+/pyvenv.cfg
+
 resources/
 resources
 
